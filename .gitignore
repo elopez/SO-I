@@ -1,0 +1,15 @@
+# build products
+*.o
+*.a
+*.pyc
+
+# file backups
+*~
+
+# client binaries
+client/cat
+client/clientbot
+client/cp
+client/create
+client/ls
+
