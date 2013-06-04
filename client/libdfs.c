@@ -44,7 +44,8 @@ int dfs_disconnect()
 
 int request(char *req, int size)
 {
-	return write(conn, req, size);
+	/* Include the null byte too */
+	return write(conn, req, size+1);
 }
 
 int read_reply(char *buffout)
