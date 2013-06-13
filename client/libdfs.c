@@ -32,7 +32,7 @@ int dfs_disconnect()
 	if (conn == 0)
 		return -1;
 	request("BYE", 3);
-	if (read_reply(buffout) != 0) {
+	if (read_reply(buffout) < 0) {
 		close(conn);
 		return -1;
 	}
@@ -60,7 +60,7 @@ int read_reply(char *buffout)
 	while (buff[i++] != '\n');
 	if (strncmp(buff, "OK ", 3) == 0) {
 		memcpy(buffout, buff + 3, i - 3);
-		return 0;
+		return i-3;
 	}
 	if (strncmp(buff, "ERROR ", 6) == 0) {
 		memcpy(buffout, buff + 6, i - 6);
@@ -75,7 +75,7 @@ FD dfs_open(char *filename)
 	int i;
 	sprintf(buff, "OPN %s", filename);
 	request(buff, strlen(buff));
-	if (read_reply(buff) != 0)
+	if (read_reply(buff) < 0)
 		return -1;
 	if (sscanf(buff, "FD %d", &i) != 1)
 		return -1;
@@ -88,7 +88,7 @@ FD dfs_create(char *filename)
 	int i;
 	sprintf(buff, "CRE %s", filename);
 	request(buff, strlen(buff));
-	if (read_reply(buff) != 0)
+	if (read_reply(buff) < 0)
 		return -1;
 	return 0;
 }
@@ -103,8 +103,12 @@ int dfs_close(FD f)
 
 int dfs_ls(char *b)
 {
+	int len;
+
 	request("LSD", 3);
-	return read_reply(b);
+	len = read_reply(b);
+	b[len] = '\0';
+	return len;
 }
 
 int dfs_rm(char *filename)
