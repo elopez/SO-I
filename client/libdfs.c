@@ -158,8 +158,10 @@ int dfs_write(FD f, int size, void *b)
 {
 	char buff[BUFF_SIZE];
 	int len;
-	sprintf(buff, "WRT FD %d SIZE %d ", f, size);
-	len = strlen(buff);
+
+	len = sprintf(buff, "WRT FD %d SIZE %d ", f, size);
+	if (size + len >= BUFF_SIZE)
+		return -1;
 	memcpy(buff + len, b, size);
 	request(buff, len + size);
 	return read_reply(buff);
