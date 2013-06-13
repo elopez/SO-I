@@ -148,9 +148,9 @@ int dfs_read(FD f, int size, void *b)
 	read_reply_space(buff);
 	/* [NSIZE]  */
 	sscanf(buff, "%d", &size);
+	read_reply_size((char *)b, size + 1);
 	if (size <= 0)
 		return EOF;
-	read_reply_size((char *)b, size + 1);
 	return size;
 }
 
