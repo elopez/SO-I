@@ -44,8 +44,11 @@ int dfs_disconnect()
 
 int request(char *req, int size)
 {
-	/* Include the null byte too */
-	return write(conn, req, size+1);
+	int written = 0;
+
+	written += write(conn, req, size);
+	written += write(conn, "\n", 1);
+	return written;
 }
 
 int read_reply(char *buffout)
@@ -54,7 +57,7 @@ int read_reply(char *buffout)
 	char buff[BUFF_SIZE], *s;
 	do
 		read(conn, buff + i, 1);
-	while (buff[i++] != '\0');
+	while (buff[i++] != '\n');
 	if (strncmp(buff, "OK ", 3) == 0) {
 		memcpy(buffout, buff + 3, i - 3);
 		return 0;

@@ -3,7 +3,7 @@ from twisted.protocols.basic import LineReceiver
 from twisted.internet import reactor
 
 class FileServer(LineReceiver):
-	delimiter = '\0'
+	delimiter = '\n'
 
 	def __init__(self, filesystem, idnum):
 		self.filesystem = filesystem
