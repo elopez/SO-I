@@ -1,22 +1,27 @@
 from twisted.internet.protocol import Factory
 from twisted.protocols.basic import LineReceiver
 from twisted.internet import reactor
+from operator import add
 
 class FileServer(LineReceiver):
 	delimiter = '\n'
 
-	def __init__(self, filesystem, idnum):
+	def __init__(self, filesystem, locks, idnum):
 		self.filesystem = filesystem
+		self.locks = locks
 		self.idnum = idnum
 		self.fds = {}
 		self.pos = {}
 		self.fd = 0
 
+	def isFileLocked(self, name):
+		return name in reduce(add, self.locks.itervalues())
+
 	def connectionMade(self):
-		pass
+		self.locks[self.idnum] = []
 
 	def connectionLost(self, reason):
-		pass
+		del self.locks[self.idnum]
 
 	def lineReceived(self, line):
 		getattr(self, "handle_{0}".format(line[:3]))(line)
@@ -43,9 +48,13 @@ class FileServer(LineReceiver):
 
 	def handle_OPN(self, message):
 		cmd, name = message.split(' ', 1)
+		if self.isFileLocked(name):
+			self.sendLine("ERROR 1338 EOPENALREADY")
+			return
 		self.fd += 1
 		self.fds[self.fd] = name
 		self.pos[self.fd] = 0
+		self.locks[self.idnum].append(name)
 		self.sendLine("OK FD {0}".format(self.fd))
 
 	def handle_WRT(self, message):
@@ -72,6 +81,7 @@ class FileServer(LineReceiver):
 
 	def handle_CLO(self, message):
 		cmd, a, fd = message.split(' ', 2)
+		self.locks[self.idnum].remove(self.fds[int(fd)])
 		del self.fds[int(fd)]
 		del self.pos[int(fd)]
 		self.sendLine("OK")
@@ -83,11 +93,12 @@ class FileServerFactory(Factory):
 
 	def __init__(self):
 		self.filesystem = {} # maps names to file contents
+		self.locks = {}
 		self.idnum = 0
 
 	def buildProtocol(self, addr):
 		self.idnum += 1
-		return FileServer(self.filesystem, self.idnum)
+		return FileServer(self.filesystem, self.locks, self.idnum)
 
 
 reactor.listenTCP(8000, FileServerFactory())
