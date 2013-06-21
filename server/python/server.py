@@ -14,13 +14,15 @@ class FileServer(LineReceiver):
 
 	def connectionMade(self):
 		pass
-		#self.sendLine("OK ID {0}".format(self.idnum))
 
 	def connectionLost(self, reason):
 		pass
 
 	def lineReceived(self, line):
 		getattr(self, "handle_{0}".format(line[:3]))(line)
+
+	def handle_CON(self, message):
+		self.sendLine("OK ID {0}".format(self.idnum))
 
 	def handle_LSD(self, name):
 		files = " ".join(self.filesystem.keys())

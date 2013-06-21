@@ -14,6 +14,9 @@ typedef struct sockaddr *sin;
 int dfs_connect(char *addr)
 {
 	struct sockaddr_in servaddr;
+	char buffout[BUFF_SIZE];
+	unsigned int id;
+
 	if (conn != 0)
 		return -1;
 	conn = socket(AF_INET, SOCK_STREAM, 0);
@@ -23,7 +26,11 @@ int dfs_connect(char *addr)
 	servaddr.sin_port = htons(8000);
 	if (connect(conn, (sin) & servaddr, sizeof(servaddr)) < 0)
 		return -1;
-	return 0;
+	request("CON", 3);
+	read_reply(buffout);
+	if (sscanf(buffout, "ID %u", &id))
+		return id;
+	return -1;
 }
 
 int dfs_disconnect()
