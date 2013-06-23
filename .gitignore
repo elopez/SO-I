@@ -13,3 +13,5 @@ client/cp
 client/create
 client/ls
 
+server/pthreads/dispatcher
+server/pthreads/worker
