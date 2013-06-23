@@ -3,11 +3,14 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "clist.h"
 #include "spawner.h"
 
 #define MODULE "dispatcher: "
 #define BUFF_SIZE 1024
 #define writeconst(con, str) write((con), (str), strlen((str)))
+
+CList *workers = CLIST_INITIALIZER;
 
 static void *handle_client_connection(void *arg)
 {
@@ -47,7 +50,37 @@ static void *handle_client_connection(void *arg)
 	return NULL;
 }
 
+int connect_to_worker(char *host, int port)
+{
+	/* TODO */
+	return 0;
+}
+
 int main(int argc, char **argv)
 {
+	char *host;
+	char *port;
+
+	if (argc == 1) {
+		fprintf(stderr, MODULE "No workers specified\n");
+		return -1;
+	}
+
+	while (*++argv) {
+		host = strtok(*argv, ":");
+		port = strtok(NULL, ":");
+
+		if (!host || !port) {
+			fprintf(stderr, MODULE "Error getting connection data\n");
+			return -1;
+		}
+
+		if (!connect_to_worker(host, atoi(port))) {
+			fprintf(stderr, MODULE "Error connecting to worker %s:%s\n",
+				host, port);
+			return -1;
+		}
+	}
+
 	return startSpawner(8000, handle_client_connection);
 }

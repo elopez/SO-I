@@ -4,7 +4,7 @@ CFLAGS=-pthread -Wall -Wextra
 
 all: dispatcher worker
 
-dispatcher: dispatcher.o spawner.o
+dispatcher: dispatcher.o spawner.o clist.o
 	$(CC) -o $@ $^ $(CFLAGS)
 
 worker: worker.o spawner.o hashtable.o
