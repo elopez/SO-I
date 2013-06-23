@@ -184,10 +184,29 @@ static void worker_write_file(int conn, char *line)
 	writeconst(conn, "OK\n");
 }
 
+static void visitor_lsd(void *key, void *value, void *names)
+{
+	strcat(names, " ");
+	strcat(names, key);
+}
+
 static void worker_list_directory(int conn)
 {
-	/* placeholder */
-	writeconst(conn, "OK\n");
+	char buffer[BUFF_SIZE] = "OK";
+	unsigned int len;
+
+	hash_table_foreach(files, visitor_lsd, buffer); /* todo */
+	len = strlen(buffer);
+
+	if (len == 2) {
+		strcat(buffer, " \n");
+		len += 2;
+	} else {
+		strcat(buffer, "\n");
+		len++;
+	}
+
+	write(conn, buffer, len);
 }
 
 static void process_incoming_line(int conn, char *line)
