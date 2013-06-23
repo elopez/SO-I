@@ -25,9 +25,11 @@ enum {
 };
 
 struct filedata {
-	char *data;
-	unsigned int open;
-	unsigned int size;
+	char *data;		/* file storage */
+	unsigned int open;	/* fd or 0 if closed */
+	unsigned int pos;	/* read position */
+	unsigned int used;	/* # of used chars from data */
+	unsigned int size;	/* # of chars available on data */
 };
 
 static int operation(const char *line)
@@ -50,17 +52,16 @@ static int operation(const char *line)
 	return -1;
 }
 
-static void worker_create_file(int conn, const char *name)
+static void worker_create_file(int conn, char *name)
 {
 	struct filedata *data;
 
 	if (hash_table_lookup(files, name) != NULL) {
 		writeconst(conn, "ERROR 17 EEXIST\n");
 	} else {
-		data = malloc(sizeof(*data)); /* TODO */
-		data->data = NULL;
-		data->open = 0;
-		data->size = 0;
+		data = calloc(1, sizeof(*data)); /* TODO */
+		data->data = malloc(8192 * sizeof(char));
+		data->size = 8192;
 		hash_table_insert(files, strdup(name), data);
 		writeconst(conn, "OK\n");
 	}
@@ -102,6 +103,7 @@ static void worker_close_file(int conn, char *cfd)
 
 	hash_table_remove(fds, &fd);
 	data->open = 0;
+	data->pos = 0;
 
 	writeconst(conn, "OK\n");
 }
@@ -122,6 +124,62 @@ static void worker_delete_file(int conn, char *name)
 	}
 
 	hash_table_remove(files, name);
+	free(data->data);
+	free(data);
+
+	writeconst(conn, "OK\n");
+}
+
+static void worker_read_file(int conn, char *cfd)
+{
+	unsigned int fd;
+	unsigned int size;
+	struct filedata *data;
+	char buff[100];
+
+	sscanf(cfd, "FD %u SIZE %u", &fd, &size);
+	data = hash_table_lookup(fds, &fd);
+
+	if (data == NULL) {
+		writeconst(conn, "ERROR 77 EBADFD\n");
+		return;
+	}
+
+	if (data->pos + size > data->used)
+		size = data->used - data->pos;
+
+	snprintf(buff, 100, "OK SIZE %u ", size);
+	write(conn, buff, strlen(buff));
+	write(conn, data->data + data->pos, size);
+	writeconst(conn, "\n");
+	data->pos += size;
+}
+
+static void worker_write_file(int conn, char *line)
+{
+	unsigned int fd;
+	unsigned int size;
+	struct filedata *data;
+	char buff[100];
+	char *content;
+
+	sscanf(line, "FD %u SIZE %u", &fd, &size);
+	data = hash_table_lookup(fds, &fd);
+
+	if (data == NULL) {
+		writeconst(conn, "ERROR 77 EBADFD\n");
+		return;
+	}
+
+	if (data->used + size >= data->size) {
+		data->size += 8192;
+		data->data = realloc(data->data, data->size * sizeof(char));
+	}
+
+	snprintf(buff, 100, "FD %u SIZE %u ", fd, size);
+	content = line + strlen(buff);
+	memcpy(data->data + data->used, content, size);
+	data->used += size;
 
 	writeconst(conn, "OK\n");
 }
@@ -142,10 +200,10 @@ static void process_incoming_line(int conn, char *line)
 		worker_open_file(conn, line+4);
 		break;
 	case OP_REA:
-		writeconst(conn, "ERROR 1 DEMO\n");
+		worker_read_file(conn, line+4);
 		break;
 	case OP_WRT:
-		writeconst(conn, "ERROR 1 DEMO\n");
+		worker_write_file(conn, line+4);
 		break;
 	case OP_CLO:
 		worker_close_file(conn, line+4);
