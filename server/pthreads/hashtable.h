@@ -10,6 +10,9 @@ typedef void (*HTVisitorFunc) (void *key, void *value, void *extra_data);
  * 'b' are different, or a value different from 0 if the objects are equal.
  */
 typedef int  (*EqualsFunc) (const void *a, const void *b);
+int hash_table_addr_equals(const void *a, const void *b);
+int hash_table_strings_equal(const void *a, const void *b);
+int hash_table_integers_equal(const void *a, const void *b);
 
 /**
  * Opaque structure representing a hash table.

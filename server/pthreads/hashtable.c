@@ -1,6 +1,7 @@
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "hashtable.h"
 
@@ -28,9 +29,19 @@ struct _HashTable {
 
 static void hash_table_resize(HashTable * table);
 
-static int hash_table_addr_equals(const void *a, const void *b)
+int hash_table_addr_equals(const void *a, const void *b)
 {
 	return (a == b);
+}
+
+int hash_table_strings_equal(const void *a, const void *b)
+{
+	return !strcmp(a, b);
+}
+
+int hash_table_integers_equal(const void *a, const void *b)
+{
+	return *(unsigned int*)a == *(unsigned int*)b;
 }
 
 /** For hashing strings, see
