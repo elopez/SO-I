@@ -26,4 +26,8 @@ void clist_destroy(CList *list);
  */
 CList *clist_insert(CList *list, int value);
 
+CList *clist_next(CList *list);
+
+int clist_data(CList *list);
+
 #endif

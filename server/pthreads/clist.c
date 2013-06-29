@@ -14,7 +14,7 @@ CList *clist_insert(CList *list, int data)
 		list = node;
 	node->next = list->next;
 	list->next = node;
-	list->data = data;
+	node->data = data;
 	return list;
 }
 
