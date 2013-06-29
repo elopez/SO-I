@@ -25,20 +25,20 @@ pthread_cond_t worker_mode_enabled;
 static int worker_mode = 0;
 
 enum {
-	/* user and worker operations */
-	OP_CRE,
-	OP_OPN,
-	OP_REA,
-	OP_WRT,
-	OP_CLO,
-	OP_LSD,
-	OP_DEL,
+	/* user operations */
+	OP_CRE,	/* create a file */
+	OP_OPN, /* open a file */
+	OP_REA, /* read from a file */
+	OP_WRT, /* write to a file */
+	OP_CLO, /* close a file */
+	OP_LSD, /* list directory */
+	OP_DEL, /* delete a file */
 	/* worker operations */
-	WO_WMO,
-	WO_EWM,
-	WO_WLN,
-	WO_WOP,
-	WO_WCL,
+	WO_WMO, /* enter worker mode */
+	WO_EWM, /* exit worker mode */
+	WO_WLN, /* link filename on another worker */
+	WO_WOP, /* open file on another worker */
+	WO_WCL, /* close file on another worker */
 };
 
 struct filedata {
@@ -80,7 +80,12 @@ static int operation(const char *line)
 	return -1;
 }
 
-static int query_all_workers(char *query)
+/**
+ * Sends a query to all workers. Workers must be in worker mode
+ * @param[in]	query	Query to send to all workers.
+ * @return number of error replies received
+ */
+static int query_all_workers(const char *query)
 {
 	int fd, res, ret, len;
 	char buff[BUFF_SIZE] = "";
@@ -111,20 +116,20 @@ static int query_all_workers(char *query)
 	return ret;
 }
 
-static int all_to_worker_mode(void)
+/**
+ * Switches all workers to worker mode
+ */
+static inline void all_to_worker_mode(void)
 {
-	if (query_all_workers("WMO\n"))
-		fprintf(stderr, MODULE "Error locking!");
-
-	return 0;
+	query_all_workers("WMO\n");
 }
 
-static int all_to_client_mode(void)
+/**
+ * Switches all workers to client mode
+ */
+static inline void all_to_client_mode(void)
 {
-	if (query_all_workers("EWM\n"))
-		fprintf(stderr, MODULE "Error unlocking!");
-
-	return 0;
+	query_all_workers("EWM\n");
 }
 
 static void worker_create_file(int conn, char *name)
@@ -428,7 +433,7 @@ static void process_incoming_line(int conn, HashTable *fds, char *line)
 	if (op < WO_EWM) {
 		pthread_mutex_lock(&worker_mode_lock);
 		while (worker_mode) {
-			fprintf(stderr, "Locked here.. %u\n", getpid());
+			fprintf(stderr, MODULE "Locked here.. %u\n", getpid());
 			pthread_cond_wait(&worker_mode_enabled, &worker_mode_lock);
 		}
 		pthread_mutex_unlock(&worker_mode_lock);
@@ -473,7 +478,6 @@ static void process_incoming_line(int conn, HashTable *fds, char *line)
 		break;
 	default:
 		writeconst(conn, "ERROR 71 EPROTO\n");
-		printf("WAS: %s\n", line);
 	}
 }
 
