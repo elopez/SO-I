@@ -12,10 +12,11 @@
 
 #define MODULE "spawner: "
 
-int startSpawner(unsigned int port, void *(*handler)(void *))
+int startSpawner(unsigned int port, void *(*handler)(void *), pthread_t *ready)
 {
 	unsigned int id = 0;
 	int sock, conn;
+	int on = 1;
 	struct sockaddr_in servaddr;
 	struct params *parameters;
 	pthread_t thread;
@@ -24,6 +25,9 @@ int startSpawner(unsigned int port, void *(*handler)(void *))
 		fprintf(stderr, MODULE "Error creating listening socket.\n");
 		return -1;
 	}
+
+	/* Enable address reuse */
+	setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
 
 	/* listen on all interfaces on the specified port */
 	memset(&servaddr, 0, sizeof(servaddr));
@@ -41,6 +45,10 @@ int startSpawner(unsigned int port, void *(*handler)(void *))
 		fprintf(stderr, MODULE "Error calling listen()\n");
 		return -1;
 	}
+
+	/* wait for server to be ready */
+	if (ready != NULL)
+		pthread_join(*ready, NULL);
 
 	/* accept client and spawn a thread to handle it */
 	while (1) {
@@ -63,4 +71,27 @@ int startSpawner(unsigned int port, void *(*handler)(void *))
 	};
 
 	return 0;
+}
+
+int startClient(char *host, int port)
+{
+	int sock;
+	struct sockaddr_in servaddr;
+
+	if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+		fprintf(stderr, MODULE "Error creating listening socket.\n");
+		return -1;
+	}
+
+	memset(&servaddr, 0, sizeof(servaddr));
+	servaddr.sin_family = AF_INET;
+	servaddr.sin_addr.s_addr = inet_addr(host);
+	servaddr.sin_port = htons(port);
+
+	if (connect(sock, (struct sockaddr *)&servaddr, sizeof(servaddr)) < 0) {
+		fprintf(stderr, MODULE "Error calling connect()\n");
+		return -1;
+	}
+
+	return sock;
 }

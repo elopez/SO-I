@@ -7,7 +7,7 @@ all: dispatcher worker
 dispatcher: dispatcher.o spawner.o clist.o
 	$(CC) -o $@ $^ $(CFLAGS)
 
-worker: worker.o spawner.o hashtable.o
+worker: worker.o spawner.o hashtable.o clist.o
 	$(CC) -o $@ $^ $(CFLAGS)
 
 clean:

@@ -6,6 +6,8 @@ struct params {
 	int conn;
 };
 
-int startSpawner(unsigned int port, void *(*handler)(void *));
+int startSpawner(unsigned int port, void *(*handler)(void *), pthread_t *ready);
+
+int startClient(char *host, int port);
 
 #endif

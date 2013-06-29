@@ -19,6 +19,7 @@ static void *handle_client_connection(void *arg)
 	int res = 0;
 	int id = parameters->id;
 	int conn = parameters->conn;
+	int worker;
 	free(parameters);
 
 	fprintf(stdout, MODULE "New client %d connected\n", id);
@@ -35,14 +36,23 @@ static void *handle_client_connection(void *arg)
 
 	writeconst(conn, "OK ID 1\n");
 
+	worker = clist_data(workers);
+	workers = clist_next(workers); /* TODO */
+
 	while (1) {
 		res = read(conn, buffer, BUFF_SIZE);
 		if (res <= 0) {
 			close(conn);
 			break;
 		}
-		buffer[res] = '\0';
-		write(conn, buffer, strlen(buffer));
+		write(worker, buffer, res);
+
+		res = read(worker, buffer, BUFF_SIZE);
+		if (res <= 0) {
+			close(worker);
+			break;
+		}
+		write(conn, buffer, res);
 	}
 
 	fprintf(stdout, MODULE "Client %d disconnected\n", id);
@@ -52,8 +62,13 @@ static void *handle_client_connection(void *arg)
 
 int connect_to_worker(char *host, int port)
 {
-	/* TODO */
-	return 0;
+	int sock = startClient(host, port);
+
+	if (sock < 0)
+		return 0;
+
+	workers = clist_insert(workers, sock);
+	return sock;
 }
 
 int main(int argc, char **argv)
@@ -82,5 +97,5 @@ int main(int argc, char **argv)
 		}
 	}
 
-	return startSpawner(8000, handle_client_connection);
+	return startSpawner(8000, handle_client_connection, NULL);
 }
