@@ -38,14 +38,15 @@ enum {
 	WO_EWM, /* exit worker mode */
 	WO_WLN, /* link filename on another worker */
 	WO_WOP, /* open file on another worker */
+	WO_WRW, /* request a write on another worker */
 	WO_WCL, /* close file on another worker */
 };
 
 struct filedata {
 	char *name;		/* file name, also key on the HT */
 	char *data;		/* file storage */
-	unsigned int open;	/* fd or 0 if closed */
-	unsigned int pos;	/* read position */
+	unsigned int open;	/* fd, 0 if closed, -1 if remote */
+	unsigned int pos;	/* read position or worker fd if remote */
 	unsigned int used;	/* # of used chars from data */
 	unsigned int size;	/* # of chars available on data */
 };
@@ -74,6 +75,8 @@ static int operation(const char *line)
 		return WO_WLN;
 	else if (strncmp("WOP", line, 3) == 0)
 		return WO_WOP;
+	else if (strncmp("WRW", line, 3) == 0)
+		return WO_WRW;
 	else if (strncmp("WCL", line, 3) == 0)
 		return WO_WCL;
 
@@ -81,11 +84,12 @@ static int operation(const char *line)
 }
 
 /**
- * Sends a query to all workers. Workers must be in worker mode
+ * Sends a query to all workers in the same order as they were loaded.
+ * Workers must be in worker mode if query is not "WMO\n"
  * @param[in]	query	Query to send to all workers.
  * @return number of error replies received
  */
-static int query_all_workers(const char *query)
+static int query_all_workers(const char *query, int rwmode)
 {
 	int fd, res, ret, len;
 	char buff[BUFF_SIZE] = "";
@@ -108,6 +112,8 @@ static int query_all_workers(const char *query)
 		if (strncmp("OK", buff, 2) != 0) {
 			ret += 1;
 			break;
+		} else if (rwmode) {
+			return fd;
 		}
 
 		curr = clist_next(curr);
@@ -121,7 +127,7 @@ static int query_all_workers(const char *query)
  */
 static inline void all_to_worker_mode(void)
 {
-	query_all_workers("WMO\n");
+	query_all_workers("WMO\n", 0);
 }
 
 /**
@@ -129,7 +135,32 @@ static inline void all_to_worker_mode(void)
  */
 static inline void all_to_client_mode(void)
 {
-	query_all_workers("EWM\n");
+	query_all_workers("EWM\n", 0);
+}
+
+static void worker_request_write(struct filedata *data, char *content, unsigned int len)
+{
+	int buflen = (len + 100) * sizeof(char);
+	int startlen;
+	int res = 0;
+	char *buff = malloc(buflen); /* TODO */
+
+	startlen = snprintf(buff, buflen, "WRW %s SIZE %u ", data->name, len);
+	memcpy(buff + startlen, content, len);
+	memcpy(buff + startlen + len, "\n\0", 2);
+
+	/* fast path - we know who holds the file */
+	if (data->pos) {
+		write(data->pos, buff, startlen + len + 1);
+		buff[0] = '\0';
+		while (strchr(buff, '\n') == NULL)
+			res += read(data->pos, buff+res, BUFF_SIZE-res);
+	} else { /* slow path - let's ask around (and cache it for next write) */
+		data->pos = query_all_workers(buff, 1);
+	}
+
+	free(buff);
+	return;
 }
 
 static void worker_create_file(int conn, char *name)
@@ -150,7 +181,7 @@ static void worker_create_file(int conn, char *name)
 		 * have it then nobody does. Let's create it. */
 
 		snprintf(buff, BUFF_SIZE, "WLN %s\n", name);
-		if (query_all_workers(buff)) {
+		if (query_all_workers(buff, 0)) {
 			fprintf(stderr, "FILESYSTEM INTEGRITY HAS BEEN COMPROMISED\n");
 		}
 
@@ -176,6 +207,7 @@ static void worker_create_link(int conn, char *name)
 
 	data = calloc(1, sizeof(*data)); /* TODO */
 	data->size = -1;
+	data->pos = 0;
 	data->name = namep;
 
 	pthread_mutex_lock(&files_lock);
@@ -213,7 +245,7 @@ static void worker_open_file(int conn, HashTable *fds, char *name)
 	pthread_mutex_unlock(&files_lock);
 
 	snprintf(buff, BUFF_SIZE, "WOP %s\n", name);
-	if (query_all_workers(buff)) {
+	if (query_all_workers(buff, 0)) {
 		fprintf(stderr, "FILESYSTEM INTEGRITY HAS BEEN COMPROMISED\n");
 	}
 
@@ -264,7 +296,7 @@ static void worker_close_file(int conn, HashTable *fds, char *cfd)
 	snprintf(buff, BUFF_SIZE, "WCL %s\n", data->name);
 	pthread_mutex_unlock(&files_lock);
 
-	if (query_all_workers(buff)) {
+	if (query_all_workers(buff, 0)) {
 		fprintf(stderr, "FILESYSTEM INTEGRITY HAS BEEN COMPROMISED\n");
 	}
 
@@ -355,13 +387,14 @@ static void worker_write_file(int conn, HashTable *fds, char *line)
 {
 	unsigned int fd;
 	unsigned int size;
+	unsigned int len;
 	struct filedata *data;
 	char buff[100];
 	char *content;
 
 	sscanf(line, "FD %u SIZE %u", &fd, &size);
-	snprintf(buff, 100, "FD %u SIZE %u ", fd, size);
-	content = line + strlen(buff);
+	len = snprintf(buff, 100, "FD %u SIZE %u ", fd, size);
+	content = line + len;
 
 	pthread_mutex_lock(&files_lock);
 	data = hash_table_lookup(fds, &fd);
@@ -372,12 +405,36 @@ static void worker_write_file(int conn, HashTable *fds, char *line)
 		return;
 	}
 
-	if (data->size == -1) {
-		/* remote TODO */
-	} else {
+	if (data->size == -1) /* remote write */
+		worker_request_write(data, content, size);
+	else /* local write */
 		append_to_file(data, content, size);
-		writeconst(conn, "OK\n");
-	}
+
+	writeconst(conn, "OK\n");
+
+	pthread_mutex_unlock(&files_lock);
+}
+
+static void worker_process_write(int conn, char *line)
+{
+	char name[BUFF_SIZE];
+	char buff[BUFF_SIZE];
+	unsigned int size;
+	unsigned int len;
+	struct filedata *data;
+	char *content;
+
+	sscanf(line, "%s SIZE %u ", name, &size);
+
+	pthread_mutex_lock(&files_lock);
+	data = hash_table_lookup(files, name);
+
+	len = snprintf(buff, BUFF_SIZE, "%s SIZE %u ", name, size);
+	content = line + len;
+
+	append_to_file(data, content, size);
+
+	writeconst(conn, "OK\n");
 
 	pthread_mutex_unlock(&files_lock);
 }
@@ -472,6 +529,9 @@ static void process_incoming_line(int conn, HashTable *fds, char *line)
 		break;
 	case WO_WOP:
 		worker_mark_as_open(conn, line+4);
+		break;
+	case WO_WRW:
+		worker_process_write(conn, line+4);
 		break;
 	case WO_WCL:
 		worker_mark_as_closed(conn, line+4);
