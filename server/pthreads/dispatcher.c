@@ -10,7 +10,29 @@
 #define BUFF_SIZE 1024
 #define writeconst(con, str) write((con), (str), strlen((str)))
 
+struct worker_data {
+	char *host;
+	int port;
+};
+
+/* list of struct worker_data */
 CList *workers = CLIST_INITIALIZER;
+
+int connect_to_worker(void)
+{
+	int sock;
+	struct worker_data *data;
+
+	data = clist_data(workers, struct worker_data *);
+	sock = startClient(data->host, data->port);
+
+	if (sock < 0)
+		return 0;
+
+	workers = clist_next(workers);
+
+	return sock;
+}
 
 static void *handle_client_connection(void *arg)
 {
@@ -39,8 +61,7 @@ static void *handle_client_connection(void *arg)
 
 	writeconst(conn, "OK ID 1\n");
 
-	worker = clist_data(workers, int);
-	workers = clist_next(workers); /* TODO */
+	worker = connect_to_worker();
 
 	maxfd = (conn > worker ? conn : worker) + 1;
 
@@ -82,25 +103,16 @@ static void *handle_client_connection(void *arg)
 	}
 
 	fprintf(stdout, MODULE "Client %d disconnected\n", id);
+	close(worker);
 
 	return NULL;
-}
-
-int connect_to_worker(char *host, int port)
-{
-	int sock = startClient(host, port);
-
-	if (sock < 0)
-		return 0;
-
-	workers = clist_insert(workers, sock);
-	return sock;
 }
 
 int main(int argc, char **argv)
 {
 	char *host;
 	char *port;
+	struct worker_data *data;
 
 	if (argc == 1) {
 		fprintf(stderr, MODULE "No workers specified\n");
@@ -116,11 +128,10 @@ int main(int argc, char **argv)
 			return -1;
 		}
 
-		if (!connect_to_worker(host, atoi(port))) {
-			fprintf(stderr, MODULE "Error connecting to worker %s:%s\n",
-				host, port);
-			return -1;
-		}
+		data = malloc(sizeof(*data)); /* TODO */
+		data->host = host;
+		data->port = atoi(port);
+		workers = clist_insert(workers, data);
 	}
 
 	return startSpawner(8000, handle_client_connection, NULL);
