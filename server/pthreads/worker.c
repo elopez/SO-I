@@ -118,7 +118,7 @@ static int query_all_workers(const char *query, int rwmode, int out)
 
 		res = 0;
 		buff[0] = '\0';
-		while (memrchr(buff, '\n', res) == NULL)
+		while (memchr(buff, '\n', res) == NULL)
 			res += read(fd, buff+res, BUFF_SIZE-res);
 
 		if (strncmp("OK", buff, 2) != 0) {
@@ -166,7 +166,7 @@ static void worker_request_write(struct filedata *data, char *content, unsigned 
 	if (data->pos) {
 		write(data->pos, buff, startlen + len + 1);
 		buff[0] = '\0';
-		while (memrchr(buff, '\n', res) == NULL)
+		while (memchr(buff, '\n', res) == NULL)
 			res += read(data->pos, buff+res, BUFF_SIZE-res);
 	} else { /* slow path - let's ask around (and cache it for next write) */
 		data->pos = query_all_workers(buff, 1, 0);
@@ -189,7 +189,7 @@ static void worker_request_read(int conn, struct filedata *data, unsigned int le
 		fprintf(stderr, "FAST PATH\n");
 		write(data->pos, buff, buflen);
 		buff[0] = '\0';
-		while (memrchr(buff, '\n', res) == NULL)
+		while (memchr(buff, '\n', res) == NULL)
 			res += read(data->pos, buff+res, BUFF_SIZE-res);
 		write(conn, buff, res);
 	} else { /* slow path - let's ask around (and cache it for next write) */
