@@ -20,6 +20,9 @@ static void *handle_client_connection(void *arg)
 	int id = parameters->id;
 	int conn = parameters->conn;
 	int worker;
+	fd_set fds;
+	struct timeval t = { .tv_sec = 0, .tv_usec = 0};
+	int maxfd;
 	free(parameters);
 
 	fprintf(stdout, MODULE "New client %d connected\n", id);
@@ -39,20 +42,43 @@ static void *handle_client_connection(void *arg)
 	worker = clist_data(workers);
 	workers = clist_next(workers); /* TODO */
 
-	while (1) {
-		res = read(conn, buffer, BUFF_SIZE);
-		if (res <= 0) {
-			close(conn);
-			break;
-		}
-		write(worker, buffer, res);
+	maxfd = (conn > worker ? conn : worker) + 1;
 
-		res = read(worker, buffer, BUFF_SIZE);
-		if (res <= 0) {
+	/* flush the fd in case a previous client left garbage on it */
+	FD_ZERO(&fds);
+	FD_SET(worker, &fds);
+	while (select(maxfd, &fds, NULL, NULL, &t) > 0)
+		read(worker, buffer, BUFF_SIZE);
+
+	while (1) {
+		FD_ZERO(&fds);
+		FD_SET(conn, &fds);
+		FD_SET(worker, &fds);
+
+		if (select(maxfd, &fds, NULL, NULL, NULL) < 0) {
+			close(conn);
 			close(worker);
 			break;
 		}
-		write(conn, buffer, res);
+
+		if (FD_ISSET(conn, &fds)) {
+			res = read(conn, buffer, BUFF_SIZE);
+			if (res <= 0) {
+				close(conn);
+				break;
+			}
+			write(worker, buffer, res);
+		}
+
+		if (FD_ISSET(worker, &fds)) {
+			res = read(worker, buffer, BUFF_SIZE);
+			if (res <= 0) {
+				fprintf(stderr, MODULE "A worker has disconnected.");
+				close(worker);
+				break;
+			}
+			write(conn, buffer, res);
+		}
 	}
 
 	fprintf(stdout, MODULE "Client %d disconnected\n", id);
