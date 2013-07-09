@@ -38,8 +38,10 @@ enum {
 	WO_EWM, /* exit worker mode */
 	WO_WLN, /* link filename on another worker */
 	WO_WOP, /* open file on another worker */
+	WO_WRR, /* request a read on another worker */
 	WO_WRW, /* request a write on another worker */
 	WO_WCL, /* close file on another worker */
+	WO_WDE, /* delete file on another worker */
 };
 
 struct filedata {
@@ -75,10 +77,14 @@ static int operation(const char *line)
 		return WO_WLN;
 	else if (strncmp("WOP", line, 3) == 0)
 		return WO_WOP;
+	else if (strncmp("WRR", line, 3) == 0)
+		return WO_WRR;
 	else if (strncmp("WRW", line, 3) == 0)
 		return WO_WRW;
 	else if (strncmp("WCL", line, 3) == 0)
 		return WO_WCL;
+	else if (strncmp("WDE", line, 3) == 0)
+		return WO_WDE;
 
 	return -1;
 }
@@ -86,13 +92,17 @@ static int operation(const char *line)
 /**
  * Sends a query to all workers in the same order as they were loaded.
  * Workers must be in worker mode if query is not "WMO\n"
- * @param[in]	query	Query to send to all workers.
- * @return number of error replies received
+ * @param[in]	query	Query to send to all workers
+ * @param[in]	rwmode	0 = query and return error replies
+ * 			1 = write mode, return fd used
+ * 			2 = read mode, return fd used and copy answer to out
+ * @param[out]	out	fd to copy the answer to if rwmode == 2
+ * @return see rwmode
  */
-static int query_all_workers(const char *query, int rwmode)
+static int query_all_workers(const char *query, int rwmode, int out)
 {
 	int fd, res, ret, len;
-	char buff[BUFF_SIZE] = "";
+	char buff[BUFF_SIZE];
 	CList *head = workers;
 	CList *curr = workers;
 
@@ -106,13 +116,14 @@ static int query_all_workers(const char *query, int rwmode)
 
 		res = 0;
 		buff[0] = '\0';
-		while (strchr(buff, '\n') == NULL)
+		while (memrchr(buff, '\n', res) == NULL)
 			res += read(fd, buff+res, BUFF_SIZE-res);
 
 		if (strncmp("OK", buff, 2) != 0) {
 			ret += 1;
-			break;
 		} else if (rwmode) {
+			if (rwmode == 2)
+				write(out, buff, res);
 			return fd;
 		}
 
@@ -127,7 +138,7 @@ static int query_all_workers(const char *query, int rwmode)
  */
 static inline void all_to_worker_mode(void)
 {
-	query_all_workers("WMO\n", 0);
+	query_all_workers("WMO\n", 0, 0);
 }
 
 /**
@@ -135,7 +146,7 @@ static inline void all_to_worker_mode(void)
  */
 static inline void all_to_client_mode(void)
 {
-	query_all_workers("EWM\n", 0);
+	query_all_workers("EWM\n", 0, 0);
 }
 
 static void worker_request_write(struct filedata *data, char *content, unsigned int len)
@@ -153,14 +164,35 @@ static void worker_request_write(struct filedata *data, char *content, unsigned 
 	if (data->pos) {
 		write(data->pos, buff, startlen + len + 1);
 		buff[0] = '\0';
-		while (strchr(buff, '\n') == NULL)
+		while (memrchr(buff, '\n', res) == NULL)
 			res += read(data->pos, buff+res, BUFF_SIZE-res);
 	} else { /* slow path - let's ask around (and cache it for next write) */
-		data->pos = query_all_workers(buff, 1);
+		data->pos = query_all_workers(buff, 1, 0);
 	}
 
 	free(buff);
 	return;
+}
+
+static void worker_request_read(int conn, struct filedata *data, unsigned int len)
+{
+	char buff[BUFF_SIZE]; /* todo */
+	int buflen;
+	int res = 0;
+
+	buflen = snprintf(buff, 100, "WRR %s SIZE %u\n", data->name, len);
+
+	/* fast path - we know who holds the file */
+	if (data->pos) {
+		fprintf(stderr, "FAST PATH\n");
+		write(data->pos, buff, buflen);
+		buff[0] = '\0';
+		while (memrchr(buff, '\n', res) == NULL)
+			res += read(data->pos, buff+res, BUFF_SIZE-res);
+		write(conn, buff, res);
+	} else { /* slow path - let's ask around (and cache it for next write) */
+		data->pos = query_all_workers(buff, 2, conn);
+	}
 }
 
 static void worker_create_file(int conn, char *name)
@@ -181,7 +213,7 @@ static void worker_create_file(int conn, char *name)
 		 * have it then nobody does. Let's create it. */
 
 		snprintf(buff, BUFF_SIZE, "WLN %s\n", name);
-		if (query_all_workers(buff, 0)) {
+		if (query_all_workers(buff, 0, 0)) {
 			fprintf(stderr, "FILESYSTEM INTEGRITY HAS BEEN COMPROMISED\n");
 		}
 
@@ -245,7 +277,7 @@ static void worker_open_file(int conn, HashTable *fds, char *name)
 	pthread_mutex_unlock(&files_lock);
 
 	snprintf(buff, BUFF_SIZE, "WOP %s\n", name);
-	if (query_all_workers(buff, 0)) {
+	if (query_all_workers(buff, 0, 0)) {
 		fprintf(stderr, "FILESYSTEM INTEGRITY HAS BEEN COMPROMISED\n");
 	}
 
@@ -296,7 +328,7 @@ static void worker_close_file(int conn, HashTable *fds, char *cfd)
 	snprintf(buff, BUFF_SIZE, "WCL %s\n", data->name);
 	pthread_mutex_unlock(&files_lock);
 
-	if (query_all_workers(buff, 0)) {
+	if (query_all_workers(buff, 0, 0)) {
 		fprintf(stderr, "FILESYSTEM INTEGRITY HAS BEEN COMPROMISED\n");
 	}
 
@@ -327,40 +359,59 @@ static void worker_mark_as_closed(int conn, char *name)
 
 static void worker_delete_file(int conn, char *name)
 {
+	char buff[BUFF_SIZE];
 	struct filedata *data;
+
+	all_to_worker_mode();
+
+	pthread_mutex_lock(&files_lock);
 	data = hash_table_lookup(files, name);
 
 	if (data == NULL) {
+		pthread_mutex_unlock(&files_lock);
+		all_to_client_mode();
 		writeconst(conn, "ERROR 2 ENOENT\n");
 		return;
 	}
 
 	if (data->open != 0) {
+		pthread_mutex_unlock(&files_lock);
+		all_to_client_mode();
 		writeconst(conn, "ERROR 16 EBUSY\n");
 		return;
 	}
 
-	hash_table_remove(files, name);
-	free(data->data);
-	free(data);
+	pthread_mutex_unlock(&files_lock);
+
+	snprintf(buff, BUFF_SIZE, "WDE %s\n", name);
+	query_all_workers(buff, 0, 0);
+
+	all_to_client_mode();
 
 	writeconst(conn, "OK\n");
 }
 
-static void worker_read_file(int conn, HashTable *fds, char *cfd)
+static void worker_process_delete(int conn, char *name)
 {
-	unsigned int fd;
-	unsigned int size;
 	struct filedata *data;
+
+	pthread_mutex_lock(&files_lock);
+
+	data = hash_table_lookup(files, name);
+	hash_table_remove(files, name);
+
+	if (data->data != -1)
+		free(data->data);
+	free(data->name);
+	free(data);
+
+	pthread_mutex_unlock(&files_lock);
+	writeconst(conn, "OK\n");
+}
+
+static void read_from_file(int conn, struct filedata *data, unsigned int size)
+{
 	char buff[100];
-
-	sscanf(cfd, "FD %u SIZE %u", &fd, &size);
-	data = hash_table_lookup(fds, &fd);
-
-	if (data == NULL) {
-		writeconst(conn, "ERROR 77 EBADFD\n");
-		return;
-	}
 
 	if (data->pos + size > data->used)
 		size = data->used - data->pos;
@@ -370,6 +421,54 @@ static void worker_read_file(int conn, HashTable *fds, char *cfd)
 	write(conn, data->data + data->pos, size);
 	writeconst(conn, "\n");
 	data->pos += size;
+}
+
+static void worker_read_file(int conn, HashTable *fds, char *cfd)
+{
+	unsigned int fd;
+	unsigned int size;
+	struct filedata *data;
+
+	sscanf(cfd, "FD %u SIZE %u", &fd, &size);
+
+	pthread_mutex_lock(&files_lock);
+	data = hash_table_lookup(fds, &fd);
+
+	if (data == NULL) {
+		writeconst(conn, "ERROR 77 EBADFD\n");
+		pthread_mutex_unlock(&files_lock);
+		return;
+	}
+
+	if (data->size == -1) { /* remote read */
+		pthread_mutex_unlock(&files_lock);
+		worker_request_read(conn, data, size);
+	} else {
+		read_from_file(conn, data, size);
+		pthread_mutex_unlock(&files_lock);
+	}
+}
+
+static void worker_process_read(int conn, char *line)
+{
+	unsigned int size;
+	char name[BUFF_SIZE];
+	struct filedata *data;
+
+	sscanf(line, "%s SIZE %u", name, &size);
+
+	pthread_mutex_lock(&files_lock);
+	data = hash_table_lookup(files, name);
+
+	if (!data || data->size == -1) { /* bad/remote read */
+		writeconst(conn, "ERROR 77 EBADFD\n");
+		pthread_mutex_unlock(&files_lock);
+		return;
+	} else {
+		read_from_file(conn, data, size);
+	}
+
+	pthread_mutex_unlock(&files_lock);
 }
 
 static void append_to_file(struct filedata *data, char *content, unsigned int size)
@@ -405,14 +504,15 @@ static void worker_write_file(int conn, HashTable *fds, char *line)
 		return;
 	}
 
-	if (data->size == -1) /* remote write */
+	if (data->size == -1) { /* remote write */
+		pthread_mutex_unlock(&files_lock);
 		worker_request_write(data, content, size);
-	else /* local write */
+	} else { /* local write */
 		append_to_file(data, content, size);
+		pthread_mutex_unlock(&files_lock);
+	}
 
 	writeconst(conn, "OK\n");
-
-	pthread_mutex_unlock(&files_lock);
 }
 
 static void worker_process_write(int conn, char *line)
@@ -428,6 +528,12 @@ static void worker_process_write(int conn, char *line)
 
 	pthread_mutex_lock(&files_lock);
 	data = hash_table_lookup(files, name);
+
+	if (!data || data->size == -1) { /* bad/remote write */
+		writeconst(conn, "ERROR 77 EBADFD\n");
+		pthread_mutex_unlock(&files_lock);
+		return;
+	}
 
 	len = snprintf(buff, BUFF_SIZE, "%s SIZE %u ", name, size);
 	content = line + len;
@@ -450,7 +556,10 @@ static void worker_list_directory(int conn)
 	char buffer[BUFF_SIZE] = "OK";
 	unsigned int len;
 
+	pthread_mutex_lock(&files_lock);
 	hash_table_foreach(files, visitor_lsd, buffer); /* todo */
+	pthread_mutex_unlock(&files_lock);
+
 	len = strlen(buffer);
 
 	if (len == 2) {
@@ -530,14 +639,21 @@ static void process_incoming_line(int conn, HashTable *fds, char *line)
 	case WO_WOP:
 		worker_mark_as_open(conn, line+4);
 		break;
+	case WO_WRR:
+		worker_process_read(conn, line+4);
+		break;
 	case WO_WRW:
 		worker_process_write(conn, line+4);
 		break;
 	case WO_WCL:
 		worker_mark_as_closed(conn, line+4);
 		break;
+	case WO_WDE:
+		worker_process_delete(conn, line+4);
+		break;
 	default:
 		writeconst(conn, "ERROR 71 EPROTO\n");
+		fprintf(stderr, MODULE "BAD MESSAGE: \"%s\"\n", line);
 	}
 }
 
