@@ -110,7 +110,7 @@ static int query_all_workers(const char *query, int rwmode, int out)
 	ret = 0;
 
 	do {
-		fd = clist_data(curr);
+		fd = clist_data(curr, int);
 
 		write(fd, query, len);
 

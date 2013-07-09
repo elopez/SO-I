@@ -3,11 +3,11 @@
 #include "clist.h"
 
 struct _CList {
-	int data;
+	uint64_t data;
 	void *next;
 };
 
-CList *clist_insert(CList *list, int data)
+CList *_clist_insert(CList *list, uint64_t data)
 {
 	CList *node = malloc(sizeof(*node));
 	if (list == NULL)
@@ -23,7 +23,7 @@ CList *clist_next(CList *list)
 	return list->next;
 }
 
-int clist_data(CList *list)
+uint64_t _clist_data(CList *list)
 {
 	return list->data;
 }

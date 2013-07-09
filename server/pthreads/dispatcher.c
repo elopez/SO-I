@@ -39,7 +39,7 @@ static void *handle_client_connection(void *arg)
 
 	writeconst(conn, "OK ID 1\n");
 
-	worker = clist_data(workers);
+	worker = clist_data(workers, int);
 	workers = clist_next(workers); /* TODO */
 
 	maxfd = (conn > worker ? conn : worker) + 1;
