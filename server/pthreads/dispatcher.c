@@ -43,7 +43,6 @@ static void *handle_client_connection(void *arg)
 	int conn = parameters->conn;
 	int worker;
 	fd_set fds;
-	struct timeval t = { .tv_sec = 0, .tv_usec = 0};
 	int maxfd;
 	free(parameters);
 
@@ -65,11 +64,8 @@ static void *handle_client_connection(void *arg)
 
 	maxfd = (conn > worker ? conn : worker) + 1;
 
-	/* flush the fd in case a previous client left garbage on it */
-	FD_ZERO(&fds);
-	FD_SET(worker, &fds);
-	while (select(maxfd, &fds, NULL, NULL, &t) > 0)
-		read(worker, buffer, BUFF_SIZE);
+	/* Enable untrusted mode on the worker */
+	writeconst(worker, "SEC\n");
 
 	while (1) {
 		FD_ZERO(&fds);
@@ -86,6 +82,7 @@ static void *handle_client_connection(void *arg)
 			res = read(conn, buffer, BUFF_SIZE);
 			if (res <= 0) {
 				close(conn);
+				close(worker);
 				break;
 			}
 			write(worker, buffer, res);
@@ -94,7 +91,8 @@ static void *handle_client_connection(void *arg)
 		if (FD_ISSET(worker, &fds)) {
 			res = read(worker, buffer, BUFF_SIZE);
 			if (res <= 0) {
-				fprintf(stderr, MODULE "A worker has disconnected.");
+				fprintf(stderr, MODULE "A worker has disconnected.\n");
+				close(conn);
 				close(worker);
 				break;
 			}
@@ -103,7 +101,6 @@ static void *handle_client_connection(void *arg)
 	}
 
 	fprintf(stdout, MODULE "Client %d disconnected\n", id);
-	close(worker);
 
 	return NULL;
 }

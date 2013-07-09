@@ -42,6 +42,8 @@ enum {
 	WO_WRW, /* request a write on another worker */
 	WO_WCL, /* close file on another worker */
 	WO_WDE, /* delete file on another worker */
+	/* dispatcher operations */
+	DI_SEC, /* enable secure mode for this connection */
 };
 
 struct filedata {
@@ -87,6 +89,8 @@ static int operation(const char *line)
 		return WO_WCL;
 	else if (strncmp("WDE", line, 3) == 0)
 		return WO_WDE;
+	else if (strncmp("SEC", line, 3) == 0)
+		return DI_SEC;
 
 	return -1;
 }
@@ -593,9 +597,15 @@ static void worker_exit_worker_mode(int conn)
 	pthread_mutex_unlock(&worker_mode_lock);
 }
 
-static void process_incoming_line(int conn, HashTable *fds, char *line)
+static int process_incoming_line(int conn, HashTable *fds, int *secure_mode, char *line)
 {
 	int op = operation(line);
+
+	if (*secure_mode && op >= WO_EWM) {
+		close(conn);
+		fprintf(stderr, MODULE "Untrusted client attempted a secure operation! disconnected\n");
+		return 0;
+	}
 
 	if (op < WO_EWM) {
 		pthread_mutex_lock(&worker_mode_lock);
@@ -652,10 +662,16 @@ static void process_incoming_line(int conn, HashTable *fds, char *line)
 	case WO_WDE:
 		worker_process_delete(conn, line+4);
 		break;
+	case DI_SEC:
+		*secure_mode = 1;
+		break;
 	default:
 		writeconst(conn, "ERROR 71 EPROTO\n");
-		fprintf(stderr, MODULE "BAD MESSAGE: \"%s\"\n", line);
+		fprintf(stderr, MODULE "Client issued invalid command! \"%s\", disconnected\n", line);
+		return 0;
 	}
+
+	return 1;
 }
 
 static void *handle_line_protocol(void *arg)
@@ -667,6 +683,7 @@ static void *handle_line_protocol(void *arg)
 	int res = 0, ret, i;
 	int id = parameters->id;
 	int conn = parameters->conn;
+	int security = 0;
 	free(parameters);
 
 	fds = hash_table_new_extended(hash_table_integers_equal, hash_table_int_hash);
@@ -685,7 +702,8 @@ static void *handle_line_protocol(void *arg)
 		for (i = 0; i < res; i++) {
 			if (buff[i] == '\n') {
 				buff[i] = '\0';
-				process_incoming_line(conn, fds, buffer);
+				if (!process_incoming_line(conn, fds, &security, buffer))
+					break;
 				buffer = &buff[i+1];
 			}
 		}
