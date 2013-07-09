@@ -50,8 +50,10 @@ struct filedata {
 	unsigned int open;	/* fd, 0 if closed, -1 if remote */
 	unsigned int pos;	/* read position or worker fd if remote */
 	unsigned int used;	/* # of used chars from data */
-	unsigned int size;	/* # of chars available on data */
+	unsigned int size;	/* # of chars available on data, -1 if remote */
 };
+
+#define IS_STORED_REMOTELY(data)	((data)->size == -1U)
 
 static int operation(const char *line)
 {
@@ -239,7 +241,6 @@ static void worker_create_link(int conn, char *name)
 
 	data = calloc(1, sizeof(*data)); /* TODO */
 	data->size = -1;
-	data->pos = 0;
 	data->name = namep;
 
 	pthread_mutex_lock(&files_lock);
@@ -400,7 +401,7 @@ static void worker_process_delete(int conn, char *name)
 	data = hash_table_lookup(files, name);
 	hash_table_remove(files, name);
 
-	if (data->data != -1)
+	if (!IS_STORED_REMOTELY(data))
 		free(data->data);
 	free(data->name);
 	free(data);
@@ -440,7 +441,7 @@ static void worker_read_file(int conn, HashTable *fds, char *cfd)
 		return;
 	}
 
-	if (data->size == -1) { /* remote read */
+	if (IS_STORED_REMOTELY(data)) { /* remote read */
 		pthread_mutex_unlock(&files_lock);
 		worker_request_read(conn, data, size);
 	} else {
@@ -460,7 +461,7 @@ static void worker_process_read(int conn, char *line)
 	pthread_mutex_lock(&files_lock);
 	data = hash_table_lookup(files, name);
 
-	if (!data || data->size == -1) { /* bad/remote read */
+	if (!data || IS_STORED_REMOTELY(data)) { /* bad/remote read */
 		writeconst(conn, "ERROR 77 EBADFD\n");
 		pthread_mutex_unlock(&files_lock);
 		return;
@@ -504,7 +505,7 @@ static void worker_write_file(int conn, HashTable *fds, char *line)
 		return;
 	}
 
-	if (data->size == -1) { /* remote write */
+	if (IS_STORED_REMOTELY(data)) { /* remote write */
 		pthread_mutex_unlock(&files_lock);
 		worker_request_write(data, content, size);
 	} else { /* local write */
@@ -529,7 +530,7 @@ static void worker_process_write(int conn, char *line)
 	pthread_mutex_lock(&files_lock);
 	data = hash_table_lookup(files, name);
 
-	if (!data || data->size == -1) { /* bad/remote write */
+	if (!data || IS_STORED_REMOTELY(data)) { /* bad/remote write */
 		writeconst(conn, "ERROR 77 EBADFD\n");
 		pthread_mutex_unlock(&files_lock);
 		return;
