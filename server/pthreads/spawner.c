@@ -7,6 +7,7 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <string.h>
+#include <signal.h>
 
 #include "spawner.h"
 
@@ -20,6 +21,10 @@ int startSpawner(unsigned int port, void *(*handler)(void *), pthread_t *ready)
 	struct sockaddr_in servaddr;
 	struct params *parameters;
 	pthread_t thread;
+
+	/* Ignore SIGPIPE, we will be paying attention to write errors
+	 * in places where we care */
+	signal(SIGPIPE, SIG_IGN);
 
 	if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
 		fprintf(stderr, MODULE "Error creating listening socket.\n");
@@ -77,6 +82,10 @@ int startClient(char *host, int port)
 {
 	int sock;
 	struct sockaddr_in servaddr;
+
+	/* Ignore SIGPIPE, we will be paying attention to write errors
+	 * in places where we care */
+	signal(SIGPIPE, SIG_IGN);
 
 	if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
 		fprintf(stderr, MODULE "Error creating listening socket.\n");
