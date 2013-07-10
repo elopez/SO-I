@@ -1,4 +1,5 @@
 #include <assert.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -6,8 +7,6 @@
 #include "hashtable.h"
 
 #define HASH_TABLE_MIN_SLOTS_NR 8
-
-#define hash_table_must_resize(x)	((x) != NULL && (x)->slots_nr * 2 <= ((x)->elements_count))
 
 /**
  * Structures representing a hash table.
@@ -25,6 +24,7 @@ struct _HashTable {
 	EqualsFunc key_equals;
 	size_t elements_count;
 	HashFunc hash;
+	pthread_rwlock_t lock;
 };
 
 static void hash_table_resize(HashTable * table);
@@ -89,6 +89,7 @@ static HashTable *hash_table_new_internal(EqualsFunc equals, HashFunc hash,
 	table->elements_count = 0;
 	table->slots_nr = slots;
 	table->slots = calloc(slots, sizeof(HashTableNode *));
+	pthread_rwlock_init(&table->lock, NULL);
 
 	return table;
 }
@@ -126,9 +127,11 @@ HashTable *hash_table_new(EqualsFunc equals)
  * The data items that were pointed to by the table are not freed (neither
  * the keys nor the values). If you want to destroy them you should call
  * first hash_table_foreach to invoke proper clean-up code.
+ *
+ * Must be called with the lock held in write mode
  */
 
-void hash_table_destroy_internal(HashTable * table)
+static void hash_table_destroy_internal(HashTable * table)
 {
 	unsigned int i;
 	HashTableNode *elem;
@@ -148,8 +151,28 @@ void hash_table_destroy(HashTable * table)
 {
 	assert(table != NULL);
 
+	pthread_rwlock_wrlock(&table->lock);
 	hash_table_destroy_internal(table);
+	pthread_rwlock_unlock(&table->lock);
+
+	pthread_rwlock_destroy(&table->lock);
 	free(table);
+}
+
+/**
+ * Indicates if the hash table must be resized
+ */
+static int hash_table_must_resize(HashTable *table)
+{
+	int status;
+
+	assert(table != NULL);
+
+	pthread_rwlock_rdlock(&table->lock);
+	status = (table->slots_nr * 2 <= table->elements_count);
+	pthread_rwlock_unlock(&table->lock);
+
+	return status;
 }
 
 /**
@@ -176,6 +199,7 @@ void hash_table_insert(HashTable * table, void *key, void *value)
 	if (hash_table_must_resize(table))
 		hash_table_resize(table);
 
+	pthread_rwlock_wrlock(&table->lock);
 	hash = table->hash(key, table->slots_nr);
 
 	if (table->slots[hash] == NULL) {
@@ -207,6 +231,7 @@ void hash_table_insert(HashTable * table, void *key, void *value)
 	}
 
 	table->elements_count++;
+	pthread_rwlock_unlock(&table->lock);
 }
 
 /**
@@ -223,11 +248,14 @@ void hash_table_remove(HashTable * table, const void *key)
 	assert(table != NULL);
 	assert(key != NULL);
 
+	pthread_rwlock_wrlock(&table->lock);
 	hash = table->hash(key, table->slots_nr);
 
 	/* key not on table, exit */
-	if (table->slots[hash] == NULL)
+	if (table->slots[hash] == NULL) {
+		pthread_rwlock_unlock(&table->lock);
 		return;
+	}
 
 	/* key (possibly) on table, delete */
 	elem = table->slots[hash];
@@ -246,7 +274,9 @@ void hash_table_remove(HashTable * table, const void *key)
 		}
 	} while (elem->next != NULL && ((elem = elem->next) || 1));
 
-	/* Element wasn't on the table, nevermind */
+	pthread_rwlock_unlock(&table->lock);
+
+	/* Maybe element wasn't on the table, nevermind */
 }
 
 /**
@@ -262,19 +292,25 @@ void *hash_table_lookup(HashTable * table, void *key)
 	assert(table != NULL);
 	assert(key != NULL);
 
+	pthread_rwlock_rdlock(&table->lock);
 	hash = table->hash(key, table->slots_nr);
 
 	/* key not on table, return NULL */
-	if (table->slots[hash] == NULL)
+	if (table->slots[hash] == NULL) {
+		pthread_rwlock_unlock(&table->lock);
 		return NULL;
+	}
 
 	/* key (possibly) on table, compare keys */
 	elem = table->slots[hash];
 	do {
 		if (table->key_equals(elem->key, key)) {
+			pthread_rwlock_unlock(&table->lock);
 			return elem->value;
 		}
 	} while (elem->next != NULL && ((elem = elem->next) || 1));
+
+	pthread_rwlock_unlock(&table->lock);
 
 	/* Element wasn't on the table */
 	return NULL;
@@ -285,8 +321,15 @@ void *hash_table_lookup(HashTable * table, void *key)
  */
 size_t hash_table_size(HashTable * table)
 {
+	size_t size;
+
 	assert(table != NULL);
-	return table->elements_count;
+
+	pthread_rwlock_rdlock(&table->lock);
+	size = table->elements_count;
+	pthread_rwlock_unlock(&table->lock);
+
+	return size;
 }
 
 /**
@@ -304,6 +347,7 @@ void hash_table_foreach(HashTable * table, HTVisitorFunc visit,
 	assert(table != NULL);
 	assert(visit != NULL);
 
+	pthread_rwlock_rdlock(&table->lock);
 	for (i = table->slots_nr - 1; i != -1; i--) {
 		node = table->slots[i];
 		while (node != NULL) {
@@ -311,6 +355,7 @@ void hash_table_foreach(HashTable * table, HTVisitorFunc visit,
 			node = node->next;
 		}
 	}
+	pthread_rwlock_unlock(&table->lock);
 }
 
 /* Resizing magic. */
@@ -330,13 +375,22 @@ static void hash_table_resize(HashTable * table)
 
 	hash_table_foreach(table, hash_table_resize_helper, new);
 
+
+	pthread_rwlock_wrlock(&table->lock);
 	/* As we're given a pointer and we should preserve it not to break
 	 * user code, we use _internal which kills all of the internal
 	 * elements, and then copy our new struct over the old one. Finally
 	 * we free the new struct because it's no longer needed */
 	hash_table_destroy_internal(table);
 
-	*table = *new;
+	/* Copy the struct over the old one, but keep the lock */
+	table->slots = new->slots;
+	table->slots_nr = new->slots_nr;
+	table->elements_count = new->elements_count;
+	pthread_rwlock_unlock(&table->lock);
+
+	/* We don't need this one now */
+	pthread_rwlock_destroy(&new->lock);
 	free(new);
 }
 
