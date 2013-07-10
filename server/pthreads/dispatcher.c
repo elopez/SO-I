@@ -38,7 +38,7 @@ static void *handle_client_connection(void *arg)
 {
 	char buffer[BUFF_SIZE];
 	struct params *parameters = arg;
-	int res = 0;
+	int res = 0, len = 0;
 	int id = parameters->id;
 	int conn = parameters->conn;
 	int worker;
@@ -49,16 +49,25 @@ static void *handle_client_connection(void *arg)
 	fprintf(stdout, MODULE "New client %d connected\n", id);
 
 	/* read the first CON\n before finding a worker */
-	while (res != 4)
-		res += read(conn, buffer + res, 4 - res);
+	while (len != 4) {
+		res = read(conn, buffer + len, 4 - len);
+		if (res <= 0) {
+			fprintf(stdout, MODULE "Client %d disconnected without telling us anything\n", id);
+			close(conn);
+			return NULL;
+		}
+		len += res;
+	}
 
 	if (!strncmp("CON", buffer, 3) == 0) {
+		fprintf(stdout, MODULE "Client %d did not connect correctly\n", id);
 		writeconst(conn, "ERROR 71 EPROTO\n");
 		close(conn);
 		return NULL;
 	}
 
-	writeconst(conn, "OK ID 1\n");
+	len = snprintf(buffer, BUFF_SIZE, "OK ID %d\n", id);
+	write(conn, buffer, len);
 
 	worker = connect_to_worker();
 
@@ -81,6 +90,7 @@ static void *handle_client_connection(void *arg)
 		if (FD_ISSET(conn, &fds)) {
 			res = read(conn, buffer, BUFF_SIZE);
 			if (res <= 0) {
+				writeconst(worker, "BYE\n");
 				close(conn);
 				close(worker);
 				break;
