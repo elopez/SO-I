@@ -12,6 +12,12 @@
 #define BUFF_SIZE 8192
 #define writeconst(con, str) write((con), (str), strlen((str)))
 
+#if __GNUC__ > 2
+# define unused __attribute__((__unused__))
+#else
+# define unused
+#endif
+
 static HashTable *files;
 static pthread_mutex_t files_lock = PTHREAD_MUTEX_INITIALIZER;
 
@@ -34,6 +40,7 @@ enum {
 	OP_CLO, /* close a file */
 	OP_LSD, /* list directory */
 	OP_DEL, /* delete a file */
+	OP_BYE, /* finalizes a connection */
 	/* worker operations */
 	WO_WMO, /* enter worker mode */
 	WO_EWM, /* exit worker mode */
@@ -74,6 +81,8 @@ static int operation(const char *line)
 		return OP_LSD;
 	else if (strncmp("DEL", line, 3) == 0)
 		return OP_DEL;
+	else if (strncmp("BYE", line, 3) == 0)
+		return OP_BYE;
 	else if (strncmp("WMO", line, 3) == 0)
 		return WO_WMO;
 	else if (strncmp("EWM", line, 3) == 0)
@@ -315,24 +324,18 @@ static void worker_mark_as_open(int conn, char *name)
 	writeconst(conn, "OK\n");
 }
 
-static void worker_close_file(int conn, HashTable *fds, char *cfd)
+static int worker_close_data(struct filedata *data)
 {
-	unsigned int fd;
-	struct filedata *data;
 	char buff[BUFF_SIZE];
-
-	sscanf(cfd, "FD %u", &fd);
 
 	all_to_worker_mode();
 
 	pthread_mutex_lock(&files_lock);
-	data = hash_table_lookup(fds, &fd);
 
 	if (data == NULL) {
 		pthread_mutex_unlock(&files_lock);
 		all_to_client_mode();
-		writeconst(conn, "ERROR 77 EBADFD\n");
-		return;
+		return 0;
 	}
 
 	snprintf(buff, BUFF_SIZE, "WCL %s\n", data->name);
@@ -344,13 +347,30 @@ static void worker_close_file(int conn, HashTable *fds, char *cfd)
 
 	all_to_client_mode();
 
-	/* we just talked with ourselves and closed the file,
-	 * let's remove the stale fd now */
+	return 1;
+}
+
+static void worker_close_file(int conn, HashTable *fds, char *cfd)
+{
+	unsigned int fd;
+	struct filedata *data;
+
+	sscanf(cfd, "FD %u", &fd);
+
 	pthread_mutex_lock(&files_lock);
-	hash_table_remove(fds, &fd);
+	data = hash_table_lookup(fds, &fd);
 	pthread_mutex_unlock(&files_lock);
 
-	writeconst(conn, "OK\n");
+	if (worker_close_data(data)) {
+		/* we just talked with ourselves and closed the file,
+		 * let's remove the stale fd now */
+		pthread_mutex_lock(&files_lock);
+		hash_table_remove(fds, &fd);
+		pthread_mutex_unlock(&files_lock);
+		writeconst(conn, "OK\n");
+	} else {
+		writeconst(conn, "ERROR 77 EBADFD\n");
+	}
 }
 
 static void worker_mark_as_closed(int conn, char *name)
@@ -555,32 +575,44 @@ static void worker_process_write(int conn, char *line)
 	pthread_mutex_unlock(&files_lock);
 }
 
-static void visitor_lsd(void *key, void *value, void *names)
+static void visitor_lsd(void *namep, unused void *value, void *fdp)
 {
-	strcat(names, " ");
-	strcat(names, key);
+	char *name = namep;
+	int fd = *(int*)fdp;
+	int len;
+	char buff[BUFF_SIZE];
+
+	len = snprintf(buff, BUFF_SIZE, " %s", name);
+	write(fd, buff, len);
 }
 
 static void worker_list_directory(int conn)
 {
-	char buffer[BUFF_SIZE] = "OK";
-	unsigned int len;
+	writeconst(conn, "OK");
 
 	pthread_mutex_lock(&files_lock);
-	hash_table_foreach(files, visitor_lsd, buffer); /* todo */
+	hash_table_foreach(files, visitor_lsd, &conn); /* todo */
 	pthread_mutex_unlock(&files_lock);
 
-	len = strlen(buffer);
+	if (hash_table_size(files) == 0)
+		writeconst(conn, " \n");
+	else
+		writeconst(conn, "\n");
+}
 
-	if (len == 2) {
-		strcat(buffer, " \n");
-		len += 2;
-	} else {
-		strcat(buffer, "\n");
-		len++;
-	}
+static void visitor_closefd(unused void *key, void *data, unused void *extra)
+{
+	worker_close_data(data);
+}
 
-	write(conn, buffer, len);
+static void worker_finalize(int conn, HashTable *fds)
+{
+	/* TODO: lock */
+	hash_table_foreach(fds, visitor_closefd, NULL);
+	hash_table_destroy(fds);
+
+	writeconst(conn, "OK\n");
+	close(conn);
 }
 
 static void worker_enter_worker_mode(int conn)
@@ -615,7 +647,7 @@ static int process_incoming_line(int conn, HashTable *fds, int *secure_mode, cha
 	if (op < WO_EWM) {
 		pthread_mutex_lock(&worker_mode_lock);
 		while (worker_mode) {
-			fprintf(stderr, MODULE "Locked here.. %u\n", getpid());
+			//fprintf(stderr, MODULE "Locked here.. %u\n", getpid());
 			pthread_cond_wait(&worker_mode_enabled, &worker_mode_lock);
 		}
 		pthread_mutex_unlock(&worker_mode_lock);
@@ -642,6 +674,10 @@ static int process_incoming_line(int conn, HashTable *fds, int *secure_mode, cha
 		break;
 	case OP_DEL:
 		worker_delete_file(conn, line+4);
+		break;
+	case OP_BYE:
+		worker_finalize(conn, fds);
+		return 1;
 		break;
 	case WO_WMO:
 		worker_enter_worker_mode(conn);
