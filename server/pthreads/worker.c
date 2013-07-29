@@ -16,6 +16,7 @@ static HashTable *files;
 static pthread_mutex_t files_lock = PTHREAD_MUTEX_INITIALIZER;
 
 static CList *workers = CLIST_INITIALIZER;
+static pthread_mutex_t workers_ipc_lock = PTHREAD_MUTEX_INITIALIZER;
 static int worker_qty = 0;
 
 static int fd_used = 0;
@@ -144,6 +145,9 @@ static int query_all_workers(const char *query, int rwmode, int out)
  */
 static inline void all_to_worker_mode(void)
 {
+	/* IPC sockets are shared among threads, using them concurrently
+	 * is asking for trouble :) */
+	pthread_mutex_lock(&workers_ipc_lock);
 	query_all_workers("WMO\n", 0, 0);
 }
 
@@ -153,6 +157,7 @@ static inline void all_to_worker_mode(void)
 static inline void all_to_client_mode(void)
 {
 	query_all_workers("EWM\n", 0, 0);
+	pthread_mutex_unlock(&workers_ipc_lock);
 }
 
 static void worker_request_write(struct filedata *data, char *content, unsigned int len)
