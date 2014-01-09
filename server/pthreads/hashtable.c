@@ -393,26 +393,3 @@ static void hash_table_resize(HashTable * table)
 	pthread_rwlock_destroy(&new->lock);
 	free(new);
 }
-
-/* Not generic! string->int only*/
-void hash_table_print_buckets(HashTable * table)
-{
-	int i = 0;
-	HashTableNode *node;
-
-	assert(table != NULL);
-
-	for (i = table->slots_nr - 1; i != -1; i--) {
-		node = table->slots[i];
-
-		printf("Bucket %d: ", i);
-
-		while (node != NULL) {
-			printf("(%s, %d) ", (char *)node->key,
-			       *(int *)node->value);
-			node = node->next;
-		}
-
-		printf("\n");
-	}
-}
