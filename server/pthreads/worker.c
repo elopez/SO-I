@@ -28,7 +28,7 @@ static int worker_qty = 0;
 static int fd_used = 0;
 
 static pthread_mutex_t worker_mode_lock = PTHREAD_MUTEX_INITIALIZER;
-pthread_cond_t worker_mode_enabled;
+static pthread_cond_t worker_mode_enabled;
 static int worker_mode = 0;
 
 enum {
@@ -765,7 +765,7 @@ static void *handle_line_protocol(void *arg)
 	return NULL;
 }
 
-int connect_to_worker(char *host, int port)
+static int connect_to_worker(char *host, int port)
 {
 	int sock = startClient(host, port);
 
@@ -776,7 +776,7 @@ int connect_to_worker(char *host, int port)
 	return sock;
 }
 
-void *interconnect_workers(void *arg)
+static void *interconnect_workers(void *arg)
 {
 	char **workers = (char**)arg;
 	char *chost;

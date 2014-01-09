@@ -16,9 +16,9 @@ struct worker_data {
 };
 
 /* list of struct worker_data */
-CList *workers = CLIST_INITIALIZER;
+static CList *workers = CLIST_INITIALIZER;
 
-int connect_to_worker(void)
+static int connect_to_worker(void)
 {
 	int sock;
 	struct worker_data *data;

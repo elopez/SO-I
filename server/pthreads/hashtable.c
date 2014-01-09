@@ -59,8 +59,8 @@ unsigned int hash_table_ugly_hash(const void *key, unsigned int limit)
 unsigned int hash_table_string_hash(const void *key, unsigned int limit)
 {
 	unsigned const char *p = key;
-	unsigned int h = 2166136261;
-	int i;
+	unsigned int h = 2166136261U;
+	unsigned int i;
 
 	for (i = 0; p[i] != '\0'; i++)
 		h = (h * 16777619) ^ p[i];
