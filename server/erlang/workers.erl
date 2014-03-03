@@ -12,6 +12,20 @@ main() ->
 	First ! {trace, self(), []}, % and gather the list of all PIDs
 	receive Workers -> Workers end.
 
+% spawn a chain of interconnected workers
+spawn_chain(Pid, 0, _) ->
+	Pid;
+spawn_chain(Pid, N, Lock) ->
+	NPid = spawn(?MODULE, worker, [Pid, Lock, []]),
+	spawn_chain(NPid, N-1, Lock).
+
+% function to close a chain of interconnected workers, making a ring
+circle_closer() ->
+	receive {Pid, Lock} ->
+		worker(Pid, Lock, [])
+	end.
+
+% worker process
 worker(NPid, Lock, Files) ->
 	MyPid = self(),
 	receive
@@ -29,15 +43,9 @@ worker(NPid, Lock, Files) ->
 			io:format("Worker ~p exiting~n", [self()]),
 			ok;
 		% private worker commands
-		{wln, Requester, Name} ->
+		{wln, Requester, Name} -> % worker link
 			NFiles = Files ++ [#file{name=Name, owner=Requester}],
 			NPid ! {wln, Requester, Name},
-			worker(NPid, Lock, NFiles);
-		{wop, Requester, Name, Fd} ->
-			File = lists:keyfind(Name, #file.name, Files),
-			NFile = File#file{fd=Fd},
-			NFiles = lists:keyreplace(Name, #file.name, Files, NFile),
-			NPid ! {wop, Requester, Name, Fd},
 			worker(NPid, Lock, NFiles);
 		% public worker commands
 		{lsd, Requester, _} ->
@@ -65,47 +73,28 @@ worker(NPid, Lock, Files) ->
 					worker(NPid, Lock, Files)
 			end;
 		{opn, Requester, Name} ->
-			case lockserv:try_lock(Lock) of
-				ok ->
-					case lists:keyfind(Name, #file.name, Files) of
-						false ->
-							Requester ! "ERROR 2 ENOENT\n",
-							NFiles = Files;
-						File ->
-							case File#file.fd of
-								0 ->
-									NFile = File#file{fd=5},
-									NFiles = lists:keyreplace(Name, #file.name, Files, NFile),
-									Msg = {wop, self(), Name, 5},
-									NPid ! Msg,
-									receive Msg -> ok end,
-									Requester ! "OK FD 5\n";
-								_ ->
-									NFiles = Files,
-									Requester ! "ERROR 1 EPERM\n"
-							end
-					end,
-					lockserv:unlock(Lock),
-					worker(NPid, Lock, NFiles);
-				fail -> % requeue message
-					self() ! {opn, Requester, Name},
-					worker(NPid, Lock, Files)
+			case lists:keyfind(Name, #file.name, Files) of
+				false ->
+					Requester ! "ERROR 2 ENOENT\n",
+					worker(NPid, Lock, Files);
+				File ->
+					Us = self(),
+					case File#file.owner of
+						Us when File#file.fd == 0 -> % our file is closed
+							NFile = File#file{fd=5},
+							NFiles = lists:keyreplace(Name, #file.name, Files, NFile),
+							Requester ! "OK FD 5\n",
+							worker(NPid, Lock, NFiles);
+						Us -> % our file is opened
+							Requester ! "ERROR 1 EPERM\n",
+							worker(NPid, Lock, Files);
+						Other -> % not our file, let the owner know
+							Other ! {opn, Requester, Name},
+							worker(NPid, Lock, Files)
+					end
 			end;
 		% error catch-all
 		{_, Requester, _} ->
 			Requester ! "ERROR 71 EPROTO\n",
 			worker(NPid, Lock, Files)
-	end.
-
-% spawn a chain of interconnected workers
-spawn_chain(Pid, 0, _) ->
-	Pid;
-spawn_chain(Pid, N, Lock) ->
-	NPid = spawn(?MODULE, worker, [Pid, Lock, []]),
-	spawn_chain(NPid, N-1, Lock).
-
-% function to close a chain of interconnected workers, making a ring
-circle_closer() ->
-	receive {Pid, Lock} ->
-		worker(Pid, Lock, [])
 	end.
