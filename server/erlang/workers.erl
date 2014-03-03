@@ -47,18 +47,24 @@ worker(NPid, Lock, Files) ->
 			NFiles = Files ++ [#file{name=Name, owner=Requester}],
 			NPid ! {wln, Requester, Name},
 			worker(NPid, Lock, NFiles);
+		{wop, Name, Fd} -> % worker open
+			File = lists:keyfind(Name, #file.name, Files),
+			NFile = File#file{fd=Fd},
+			NFiles = lists:keyreplace(Name, #file.name, Files, NFile),
+			NPid ! {wop, Name, Fd},
+			worker(NPid, Lock, NFiles);
 		% public worker commands
-		{lsd, Requester, _} ->
+		{lsd, Requester, _} -> % list files
 			Names = [X#file.name || X <- Files],
 			Requester ! "OK " ++ string:join(Names, " ") ++ "\n",
 			worker(NPid, Lock, Files);
-		{cre, Requester, Name} ->
+		{cre, Requester, Name} -> % create a file
 			case lockserv:try_lock(Lock) of
 				ok ->
 					case lists:keyfind(Name, #file.name, Files) of
 						false ->
 							NFiles = Files ++ [#file{name=Name, owner=self()}],
-							Msg = {wln, self(), Name},
+							Msg = {wln, MyPid, Name},
 							NPid ! Msg,
 							receive Msg -> ok end,
 							Requester ! "OK\n";
@@ -72,20 +78,22 @@ worker(NPid, Lock, Files) ->
 					self() ! {cre, Requester, Name},
 					worker(NPid, Lock, Files)
 			end;
-		{opn, Requester, Name} ->
+		{opn, Requester, Name} -> % open a file
 			case lists:keyfind(Name, #file.name, Files) of
 				false ->
 					Requester ! "ERROR 2 ENOENT\n",
 					worker(NPid, Lock, Files);
 				File ->
-					Us = self(),
 					case File#file.owner of
-						Us when File#file.fd == 0 -> % our file is closed
+						MyPid when File#file.fd == 0 -> % our file is closed
 							NFile = File#file{fd=5},
 							NFiles = lists:keyreplace(Name, #file.name, Files, NFile),
+							Msg = {wop, Name, 5},
+							NPid ! Msg,
+							receive Msg -> ok end,
 							Requester ! "OK FD 5\n",
 							worker(NPid, Lock, NFiles);
-						Us -> % our file is opened
+						MyPid -> % our file is opened
 							Requester ! "ERROR 1 EPERM\n",
 							worker(NPid, Lock, Files);
 						Other -> % not our file, let the owner know
