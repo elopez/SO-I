@@ -1,6 +1,6 @@
 .PNONY: all clean run
 
-all: dispatcher.beam workers.beam lockserv.beam
+all: dispatcher.beam workers.beam lockserv.beam fdserv.beam
 
 %.beam: %.erl
 	erlc $<
