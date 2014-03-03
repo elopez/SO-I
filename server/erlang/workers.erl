@@ -58,6 +58,10 @@ worker(NPid, State, Files) ->
 			NFiles = lists:keyreplace(Name, #file.name, Files, NFile),
 			NPid ! {wop, Name, Fd},
 			worker(NPid, State, NFiles);
+		{wde, Name} -> % worker delete
+			NFiles = lists:keydelete(Name, #file.name, Files),
+			NPid ! {wde, Name},
+			worker(NPid, State, NFiles);
 		% public worker commands
 		{lsd, Requester, _} -> % list files
 			Names = [X#file.name || X <- Files],
@@ -128,6 +132,28 @@ worker(NPid, State, Files) ->
 							worker(NPid, State, Files);
 						Other -> % not our file, let the owner know
 							Other ! {clo, Requester, [$F,$D,$ |Id]},
+							worker(NPid, State, Files)
+					end
+			end;
+		{del, Requester, Name} -> % remove a file
+			case lists:keyfind(Name, #file.name, Files) of
+				false ->
+					Requester ! "ERROR 2 ENOENT\n",
+					worker(NPid, State, Files);
+				File when File#file.fd =/= 0 ->
+					Requester ! "ERROR 16 EBUSY\n",
+					worker(NPid, State, Files);
+				File ->
+					case File#file.owner of
+						MyPid -> % our file
+							NFiles = lists:keydelete(Name, #file.name, Files),
+							Msg = {wde, Name},
+							NPid ! Msg,
+							receive Msg -> ok end,
+							Requester ! "OK\n",
+							worker(NPid, State, NFiles);
+						Other -> % not our file, let the owner know
+							Other ! {del, Requester, Name},
 							worker(NPid, State, Files)
 					end
 			end;
