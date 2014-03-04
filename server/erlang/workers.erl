@@ -2,7 +2,7 @@
 -compile(export_all).
 
 -define(WORKER_QTY, 5).
--record(file, {name, owner, pos = 0, fd = 0, client, body = []}).
+-record(file, {name, owner, pos = 0, fd = 0, client, body = ""}).
 -record(worker, {lock, fd}).
 
 main() ->
@@ -96,7 +96,7 @@ worker(NPid, State, Files) ->
 					case File#file.owner of
 						MyPid when File#file.fd == 0 -> % our file is closed
 							Fd = fdserv:get_fd(Fds),
-							NFile = File#file{fd = Fd, client = Requester},
+							NFile = File#file{fd = Fd, client = Requester, pos = 0},
 							NFiles = lists:keyreplace(Name, #file.name, Files, NFile),
 							Msg = {wop, Name, Fd},
 							NPid ! Msg,
@@ -156,6 +156,34 @@ worker(NPid, State, Files) ->
 							Other ! {del, Requester, Name},
 							worker(NPid, State, Files)
 					end
+			end;
+		{rea, Requester, [$F,$D,$ |Rest]} -> % read from a file
+			[Id, "SIZE", Sz] = string:tokens(Rest, " "),
+			Fd = list_to_integer(Id),
+			Size = list_to_integer(Sz),
+			case lists:keyfind(Fd, #file.fd, Files) of
+				false -> % no such file
+					Requester ! "ERROR 77 EBADFD\n",
+					worker(NPid, State, Files);
+				File when File#file.client =/= Requester -> % unauthorized attempt
+					Requester ! "ERROR 1 EPERM\n",
+					worker(NPid, State, Files);
+				File when File#file.owner == MyPid -> % my own file
+					Len = length(File#file.body),
+					case File#file.pos of
+						Pos when Pos + Size < Len -> % enough contents to read
+							LenRead = Size;
+						Pos -> % not enough contents to read
+							LenRead = Len - Pos
+					end,
+					Content = string:substr(File#file.body, File#file.pos+1, LenRead),
+					NFile = File#file{pos=File#file.pos+LenRead},
+					NFiles = lists:keyreplace(Fd, #file.fd, Files, NFile),
+					Requester ! "OK SIZE "++integer_to_list(LenRead)++" "++Content++"\n",
+					worker(NPid, State, NFiles);
+				File -> % not our file
+					File#file.owner ! {rea, Requester, [$F,$D,$ |Rest]},
+					worker(NPid, State, Files)
 			end;
 		% error catch-all
 		{_, Requester, _} ->
