@@ -77,13 +77,29 @@ get_line(Sock, Buffer) ->
 
 % split a line after \n
 break_line(Chars) ->
-	break_line(Chars, []).
+	break_line(Chars, [], 0).
 
-break_line([$\n | Chars], Buf) ->
+break_line([$S,$I,$Z,$E,$ |Rest], Buf, 1) ->
+	{Size, [$ | NRest]} = string:to_integer(Rest),
+	case length(NRest) of
+		N when N =< Size ->
+			more;
+		_ when Size == 0 ->
+			NBuf = "SIZE 0 ",
+			break_line(NRest, lists:reverse(NBuf) ++ Buf, 0);
+		_ ->
+			Queued = string:substr(NRest, Size+1),
+			Content = string:substr(NRest, 1, Size),
+			NBuf = "SIZE " ++ integer_to_list(Size) ++ " " ++ Content,
+			break_line(Queued, lists:reverse(NBuf) ++ Buf, 0)
+	end;
+break_line([$W,$R,$T | Chars], Buf, 0) ->
+	break_line(Chars, "TRW" ++ Buf, 1);
+break_line([$\n | Chars], Buf, 0) ->
 	{ok, lists:reverse(Buf), Chars};
-break_line([X | Chars], Buf) ->
-	break_line(Chars, [X | Buf]);
-break_line([], _) ->
+break_line([X | Chars], Buf, S) ->
+	break_line(Chars, [X | Buf], S);
+break_line([], _, _) ->
 	more.
 
 % returns the first element and updates the list
