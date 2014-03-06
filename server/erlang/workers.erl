@@ -185,6 +185,28 @@ worker(NPid, State, Files) ->
 					File#file.owner ! {rea, Requester, [$F,$D,$ |Rest]},
 					worker(NPid, State, Files)
 			end;
+		{wrt, Requester, [$F,$D,$ |Rest]} -> % read from a file
+			[Id, "SIZE", Sz | Others] = string:tokens(Rest, " "),
+			Fd = list_to_integer(Id),
+			Size = list_to_integer(Sz),
+			case lists:keyfind(Fd, #file.fd, Files) of
+				false -> % no such file
+					Requester ! "ERROR 77 EBADFD\n",
+					worker(NPid, State, Files);
+				File when File#file.client =/= Requester -> % unauthorized attempt
+					Requester ! "ERROR 1 EPERM\n",
+					worker(NPid, State, Files);
+				File when File#file.owner == MyPid -> % my own file
+					Padding = length(Id ++ " SIZE " ++ Sz ++ " ")+1,
+					Content = string:substr(Rest, Padding, Size),
+					NFile = File#file{body=File#file.body++Content},
+					NFiles = lists:keyreplace(Fd, #file.fd, Files, NFile),
+					Requester ! "OK\n",
+					worker(NPid, State, NFiles);
+				File -> % not our file
+					File#file.owner ! {wrt, Requester, [$F,$D,$ |Rest]},
+					worker(NPid, State, Files)
+			end;
 		% error catch-all
 		{_, Requester, _} ->
 			Requester ! "ERROR 71 EPROTO\n",
