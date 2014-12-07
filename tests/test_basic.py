@@ -49,8 +49,13 @@ class TestBasicFunctionality(ServerTest):
 		self.assertEqual(self.recv(), "OK\n")
 		self.send("DEL testing1\n")
 		self.assertEqual(self.recv(), "ERROR 2 ENOENT\n")
+		# Deleted files should not show up on LSD
+		self.send("LSD\n")
+		self.assertEqual(self.recv(), "OK testing2\n")
 		self.send("DEL testing2\n")
 		self.assertEqual(self.recv(), "OK\n")
+		self.send("LSD\n")
+		self.assertEqual(self.recv(), "OK \n")
 
 	def tearDown(self):
-		self.send("BYE\n")
+		self.disconnect()

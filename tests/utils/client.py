@@ -23,6 +23,10 @@ class ServerTest(unittest.TestCase):
 		self.send("CON\n")
 		self.recv()
 
-	def create_file(name):
+	def create_file(self, name):
 		self.send("CRE " + name + "\n")
 		self.recv()
+
+	def disconnect(self):
+		self.send("BYE\n")
+		self.s.close()
