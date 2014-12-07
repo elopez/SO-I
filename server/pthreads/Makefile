@@ -1,14 +1,15 @@
 CC=gcc
-CFLAGS=-pthread -Wall -Wextra
+CFLAGS=-Wall -Wextra -g
+LDFLAGS=-lpthread
 .PHONY: clean all
 
 all: dispatcher worker
 
 dispatcher: dispatcher.o spawner.o clist.o
-	$(CC) -o $@ $^ $(CFLAGS)
+	$(CC) -o $@ $^ $(CFLAGS) $(LDFLAGS)
 
 worker: worker.o spawner.o hashtable.o clist.o
-	$(CC) -o $@ $^ $(CFLAGS)
+	$(CC) -o $@ $^ $(CFLAGS) $(LDFLAGS)
 
 clean:
-	rm *.o dispatcher worker
+	rm -f *.o dispatcher worker
