@@ -10,12 +10,16 @@ struct _CList {
 CList *_clist_insert(CList *list, uint64_t data)
 {
 	CList *node = malloc(sizeof(*node));
-	if (list == NULL)
-		list = node;
-	node->next = list->next;
-	list->next = node;
 	node->data = data;
-	return list;
+
+	if (list == NULL) {
+		node->next = node;
+		return node;
+	} else {
+		node->next = list->next;
+		list->next = node;
+		return list;
+	}
 }
 
 CList *clist_next(CList *list)
