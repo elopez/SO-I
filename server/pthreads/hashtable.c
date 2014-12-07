@@ -145,6 +145,8 @@ static void hash_table_destroy_internal(HashTable * table)
 			free(elem);
 		}
 	}
+
+	free(table->slots);
 }
 
 void hash_table_destroy(HashTable * table)
