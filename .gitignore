@@ -2,7 +2,9 @@
 *.o
 *.a
 *.pyc
+__pycache__
 *.beam
+erl_crash.dump
 
 # file backups
 *~
