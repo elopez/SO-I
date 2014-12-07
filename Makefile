@@ -14,7 +14,7 @@ test-pthreads: pthreads
 	cd server/pthreads && ./runworkers.sh &
 	sleep 3
 	make -C tests
-	killall -9 dispatcher worker
+	killall -9 dispatcher
 
 # erlang testing
 test-erlang: erlang
