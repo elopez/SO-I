@@ -604,13 +604,13 @@ static void visitor_closefd(unused void *key, void *data, unused void *extra)
 	worker_close_data(data);
 }
 
-static void worker_finalize(int conn, HashTable *fds)
+static void worker_finalize(int conn, HashTable *fds, const char *msg)
 {
 	/* TODO: lock */
 	hash_table_foreach(fds, visitor_closefd, NULL);
 	hash_table_destroy(fds);
 
-	writeconst(conn, "OK\n");
+	write(conn, msg, strlen(msg));
 	close(conn);
 }
 
@@ -674,7 +674,7 @@ static int process_incoming_line(int conn, HashTable *fds, int *secure_mode, cha
 		worker_delete_file(conn, line+4);
 		break;
 	case OP_BYE:
-		worker_finalize(conn, fds);
+		worker_finalize(conn, fds, "OK\n");
 		return 0;
 		break;
 	case WO_WMO:
@@ -705,7 +705,7 @@ static int process_incoming_line(int conn, HashTable *fds, int *secure_mode, cha
 		*secure_mode = 1;
 		break;
 	default:
-		writeconst(conn, "ERROR 71 EPROTO\n");
+		worker_finalize(conn, fds, "ERROR 71 EPROTO\n");
 		fprintf(stderr, MODULE "Client issued invalid command! \"%s\", disconnected\n", line);
 		return 0;
 	}
