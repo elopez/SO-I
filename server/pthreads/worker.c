@@ -675,7 +675,7 @@ static int process_incoming_line(int conn, HashTable *fds, int *secure_mode, cha
 		break;
 	case OP_BYE:
 		worker_finalize(conn, fds);
-		return 1;
+		return 0;
 		break;
 	case WO_WMO:
 		worker_enter_worker_mode(conn);
