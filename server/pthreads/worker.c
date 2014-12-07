@@ -204,7 +204,6 @@ static void worker_request_read(int conn, struct filedata *data, unsigned int le
 
 	/* fast path - we know who holds the file */
 	if (data->pos) {
-		fprintf(stderr, "FAST PATH\n");
 		write(data->pos, buff, buflen);
 		buff[0] = '\0';
 		while (memchr(buff, '\n', res) == NULL)
@@ -647,7 +646,6 @@ static int process_incoming_line(int conn, HashTable *fds, int *secure_mode, cha
 	if (op < WO_EWM) {
 		pthread_mutex_lock(&worker_mode_lock);
 		while (worker_mode) {
-			//fprintf(stderr, MODULE "Locked here.. %u\n", getpid());
 			pthread_cond_wait(&worker_mode_enabled, &worker_mode_lock);
 		}
 		pthread_mutex_unlock(&worker_mode_lock);
