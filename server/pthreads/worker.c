@@ -732,7 +732,7 @@ static void *handle_line_protocol(void *arg)
 	fprintf(stdout, MODULE "New client %d connected\n", id);
 
 	while (1) {
-		ret = read(conn, buffer+res, BUFF_SIZE-res);
+		ret = read(conn, buffer+res, BUFF_SIZE-res-1);
 		if (ret <= 0) {
 			close(conn);
 			break;
@@ -760,7 +760,7 @@ static void *handle_line_protocol(void *arg)
 	}
 
 	fprintf(stdout, MODULE "Client %d disconnected %s\n", id,
-		res == BUFF_SIZE ? "due to overflowed buffer" : "normally");
+		res+1 == BUFF_SIZE ? "due to overflowed buffer" : "normally");
 
 	return NULL;
 }
