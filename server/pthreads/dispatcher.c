@@ -1,3 +1,4 @@
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -17,19 +18,25 @@ struct worker_data {
 
 /* list of struct worker_data */
 static CList *workers = CLIST_INITIALIZER;
+static pthread_mutex_t workers_lock = PTHREAD_MUTEX_INITIALIZER;
 
 static int connect_to_worker(void)
 {
 	int sock;
 	struct worker_data *data;
 
+	pthread_mutex_lock(&workers_lock);
 	data = clist_data(workers, struct worker_data *);
 	sock = startClient(data->host, data->port);
 
-	if (sock < 0)
+	if (sock < 0) {
+		fprintf(stderr, MODULE "ERROR: a worker is not letting us connect!\n");
+		pthread_mutex_unlock(&workers_lock);
 		return 0;
+	}
 
 	workers = clist_next(workers);
+	pthread_mutex_unlock(&workers_lock);
 
 	return sock;
 }
@@ -66,10 +73,15 @@ static void *handle_client_connection(void *arg)
 		return NULL;
 	}
 
+	worker = connect_to_worker();
+	if (!worker) {
+		writeconst(conn, "ERROR 112 EHOSTDOWN\n");
+		close(conn);
+		return NULL;
+	}
+
 	len = snprintf(buffer, BUFF_SIZE, "OK ID %d\n", id);
 	write(conn, buffer, len);
-
-	worker = connect_to_worker();
 
 	maxfd = (conn > worker ? conn : worker) + 1;
 
@@ -138,6 +150,7 @@ int main(int argc, char **argv)
 		data = malloc(sizeof(*data)); /* TODO */
 		data->host = host;
 		data->port = atoi(port);
+		/* No need for locking here, as there's no threads yet */
 		workers = clist_insert(workers, data);
 	}
 
