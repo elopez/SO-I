@@ -633,6 +633,27 @@ static void worker_exit_worker_mode(int conn)
 	pthread_mutex_unlock(&worker_mode_lock);
 }
 
+int buffer_is_sensible(char *line, size_t len)
+{
+	unsigned int fd;
+	size_t sz, hdrlen;
+	char wrthdr[] = "WRT FD %u SIZE %lu ";
+	char buff[BUFF_SIZE];
+
+	if (strncmp("WRT", line, 3) == 0) {
+		if (sscanf(line, wrthdr, &fd, &sz) == 2) {
+			snprintf(buff, BUFF_SIZE, wrthdr, fd, sz);
+			hdrlen = strlen(buff);
+			if (len >= hdrlen + sz)
+				return 1;
+		}
+
+		return 0;
+	}
+
+	return 1;
+}
+
 static int process_incoming_line(int conn, HashTable *fds, int *secure_mode, char *line)
 {
 	int op = operation(line);
@@ -739,7 +760,7 @@ static void *handle_line_protocol(void *arg)
 		buffer[res] = '\0';
 
 		for (i = 0; i < res; i++) {
-			if (buff[i] == '\n') {
+			if (buff[i] == '\n' && buffer_is_sensible(buffer, &buff[i]-buffer)) {
 				buff[i] = '\0';
 				if (!process_incoming_line(conn, fds, &security, buffer))
 					break;
